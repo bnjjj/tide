@@ -67,8 +67,10 @@ fn main() -> io::Result<()> {
 
         let mut validator_middleware = ValidatorMiddleware::new();
         validator_middleware.add_validator(ParameterType::Param("n"), is_number);
+        validator_middleware.add_validator(ParameterType::Header("X-Custom-Header"), is_number);
         validator_middleware.add_validator(ParameterType::QueryParam("test"), is_bool);
         validator_middleware.add_validator(ParameterType::QueryParam("test"), is_length_under(10));
+        validator_middleware.add_validator(ParameterType::Cookie("test"), is_length_under(20));
 
         app.at("/test/:n").middleware(validator_middleware).get(
             |_: tide::Request<()>| async move {
@@ -85,14 +87,21 @@ fn main() -> io::Result<()> {
 }
 // TODO: add validation about cookies, headers and maybe body ? https://express-validator.github.io/docs/check-api.html
 // TODO: add ctx in closure to have other informations about request ? Maybe in further version
+// TODO: add required param
 // trait Validator = Fn(&str) -> Result<(), String> + Send + Sync + 'static;
+
+// #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+// enum Field<'a> {
+//     Required(&'a str),
+//     Optional(&'a str),
+// }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 enum ParameterType<'a> {
     Param(&'a str),
     QueryParam(&'a str),
-    //Header
-    //Cookie
+    Header(&'a str),
+    Cookie(&'a str),
 }
 
 struct ValidatorMiddleware<T>
@@ -189,6 +198,42 @@ where
                                             return Response::new(500).body_string(format!(
                                                 "cannot serialize your query parameter validator for '{}' error : {:?}",
                                                 param_name,
+                                                err
+                                            ));
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    ParameterType::Header(header_name) => {
+                        for validator in validators {
+                            let header_found: Option<&str> = ctx.header(header_name);
+                            if let Some(header_value) = header_found {
+                                if let Err(err) = validator(header_value) {
+                                    return Response::new(400).body_json(&err).unwrap_or_else(
+                                        |err| {
+                                            return Response::new(500).body_string(format!(
+                                                "cannot serialize your header validator for '{}' error : {:?}",
+                                                header_name,
+                                                err
+                                            ));
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    ParameterType::Cookie(cookie_name) => {
+                        for validator in validators {
+                            let cookie_found = ctx.cookie(cookie_name);
+                            if let Some(cookie) = cookie_found {
+                                if let Err(err) = validator(cookie.value()) {
+                                    return Response::new(400).body_json(&err).unwrap_or_else(
+                                        |err| {
+                                            return Response::new(500).body_string(format!(
+                                                "cannot serialize your cookie validator for '{}' error : {:?}",
+                                                cookie_name,
                                                 err
                                             ));
                                         },
